@@ -1,4 +1,7 @@
 class Shape {
+  constructor(data) {
+    for (const key in data) this[key] = data[key]
+  }
   merge(obj) {
     this.stroke = obj.stroke
     this.lineWidth = obj.lineWidth
@@ -9,6 +12,9 @@ class Shape {
     return this.constructor === obj.constructor && this._matrix === obj.matrix && this.clips === obj.clips &&
           this.alpha === 1 && obj.alpha === 1 &&
           this.isSameProperty(obj) && !this.stroke && !obj.fill && obj.stroke
+  }
+  isSameProperty(obj) {
+    return false
   }
   styleAttrs() {
     const attrs = []
@@ -25,10 +31,9 @@ class Shape {
   }
 }
 
-class Path extends Shape {
+class PathShape extends Shape {
   constructor(data) {
-    super()
-    for (const key in data) this[key] = data[key]
+    super(data)
   }
   isSameProperty(obj) {
     return this.path == obj.path
@@ -46,10 +51,9 @@ function escapeText(text) {
   measureSpan.textContent = ''
   return escaped
 }
-class Text extends Shape {
+class TextShape extends Shape {
   constructor(data) {
-    super()
-    for (const key in data) this[key] = data[key]
+    super(data)
   }
   isSameProperty(obj) {
     return this.text === obj.text && this.font == obj.font && this.align === obj.align && this.baseline === obj.baseline
@@ -69,7 +73,26 @@ class Text extends Shape {
     return `<text ${attrs.join(' ')}>${escapeText(this.text)}</text>`
   }
 }
-
+class ImageShape extends Shape {
+  constructor(data) {
+    super(data)
+  }
+  toSVG() {
+    const { src, width, height, dx, dy, dw, dh, sx, sy, sw, sh, alpha } = this
+    if (sx == null) {
+      return `<image xlink:href="${src}" x="${dx}" y="${dy}" width="${dw}" height="${dh}" opacity=${alpha} />`
+    } else {
+      const id = `i${Math.random().toString(36).substr(2)}`
+      return [
+        `<clipPath id="${id}"><path d="M${dx},${dy}L${dx + dw},${dy}L${dx + dw},${dy + dh}L${dx},${dy + dh}" /></clipPath>`,
+        `<g clip-path="url(#${id})">`,
+        `<g transform="translate(${dx},${dy})">`,
+        `<image xlink:href="${src}" x="${-sx * dw / sw}" y="${-sy * dh / sh}" width="${width * dw / sw}" height="${height * dh / sh}" opacity=${alpha} />`,
+        '</g></g>'
+      ].join("\n")
+    }
+  }
+}
 class Matrix {
   constructor(xx = 1, xy = 0, tx = 0, yx = 0, yy = 1, ty = 0) {
     this.xx = xx
@@ -273,10 +296,10 @@ class SVGRenderingContext2D {
     this._path.push('C', this._trans({ x: ax, y: ay }), ',', this._trans({ x: bx, y: by }), ',', this._trans({ x: cx, y: cy }))
   }
   stroke() {
-    this._add(new Path({ path: this._tpath(), matrix: this._matrix, ...this._strokeState() }))
+    this._add(new PathShape({ path: this._tpath(), matrix: this._matrix, ...this._strokeState() }))
   }
   fill() {
-    this._add(new Path({ path: this._tpath(), matrix: this._matrix, ...this._fillState() }))
+    this._add(new PathShape({ path: this._tpath(), matrix: this._matrix, ...this._fillState() }))
   }
   _trans(p) {
     return this._matrix.convert(p)
@@ -294,13 +317,51 @@ class SVGRenderingContext2D {
     return { font: this.font, align: this.textAlign, baseline: this.textBaseline }
   }
   strokeText(text, x, y) {
-    this._add(new Text({ text, x, y, matrix: this._matrix, ...this._strokeState(), ...this._textState() }))
+    this._add(new TextShape({ text, x, y, matrix: this._matrix, ...this._strokeState(), ...this._textState() }))
   }
   fillText(text, x, y) {
-    this._add(new Text({ text, x, y, matrix: this._matrix, ...this._fillState(), ...this._textState() }))
+    this._add(new TextShape({ text, x, y, matrix: this._matrix, ...this._fillState(), ...this._textState() }))
   }
-  closePath(){
+  closePath() {
     this._path.push('z')
+  }
+  drawImage() {
+    let image, dx, dy, dw, dh, sx, sy, sw, sh
+    if (arguments.length === 3) {
+      [image, dx, dy] = arguments
+    } else if (arguments.length === 5) {
+      [image, dx, dy, dw, dh] = arguments
+    } else if (arguments.length === 9) {
+      [image, sx, sy, sw, sh, dx, dy, dw, dh] = arguments
+    } else {
+      return
+    }
+    let src, width, height
+    if (image instanceof Image) {
+      src = image.src
+      width = image.naturalWidth
+      height = image.naturalHeight
+    } else if (image instanceof HTMLVideoElement) {
+      width = image.videoWidth
+      height = image.videoHeight
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      canvas.getCotext('2d').drawImage(image, 0, 0, width, height)
+      src = canvas.toDataURL('image/jpeg')
+    } else {
+      width = image.width
+      height = image.height
+      src = image.toDataURL()
+    }
+    if (dw == null) dw = width
+    if (dh == null) dh = height
+    this._add(new ImageShape({
+      matrix: this._matrix,
+      clips: this._currentClips,
+      alpha: this.globalAlpha,
+      src, width, height, dx, dy, dw, dh, sx, sy, sw, sh
+    }))
   }
   _rectPath(x, y, w, h) {
     return [
@@ -332,23 +393,23 @@ class SVGRenderingContext2D {
     return this._path.map(p => {
       if (typeof p === 'string') return p
       const { x, y } = p
-      return `${Math.round(x * 100) / 100} ${Math.round(y * 100) / 100}`
+      return `${Math.round(x * 100) / 100},${Math.round(y * 100) / 100}`
     }).join('')
   }
   _tpath() {
     return this._path.map(p => {
       if (typeof p === 'string') return p
       const { x, y } = this._rtrans(p)
-      return `${Math.round(x * 100) / 100} ${Math.round(y * 100) / 100}`
+      return `${Math.round(x * 100) / 100},${Math.round(y * 100) / 100}`
     }).join('')
   }
   clearRect(x, y, w, h) {
-    this._add(new Path({ path: _rectPath(x, y, w, h), matrix: this._matrix, fill: 'white', alpha: 1 }))
+    this._add(new PathShape({ path: _rectPath(x, y, w, h), matrix: this._matrix, fill: 'white', alpha: 1 }))
   }
   strokeRect(x, y, w, h) {
-    this._add(new Path({ path: _rectPath(x, y, w, h), matrix: this._matrix, ...this._strokeState() }))
+    this._add(new PathShape({ path: _rectPath(x, y, w, h), matrix: this._matrix, ...this._strokeState() }))
   }
   fillRect(x, y, w, h) {
-    this._add(new Path({ path: _rectPath(x, y, w, h), matrix: this._matrix, ...this._fillState() }))
+    this._add(new PathShape({ path: _rectPath(x, y, w, h), matrix: this._matrix, ...this._fillState() }))
   }
 }
