@@ -1,4 +1,4 @@
-class Shape {
+class BaseShape {
   constructor(data) {
     for (const key in data) this[key] = data[key]
   }
@@ -31,7 +31,7 @@ class Shape {
   }
 }
 
-class PathShape extends Shape {
+class PathShape extends BaseShape {
   constructor(data) {
     super(data)
   }
@@ -51,7 +51,7 @@ function escapeText(text) {
   measureSpan.textContent = ''
   return escaped
 }
-class TextShape extends Shape {
+class TextShape extends BaseShape {
   constructor(data) {
     super(data)
   }
@@ -64,16 +64,16 @@ class TextShape extends Shape {
       ...this.styleAttrs(),
       `x="${this.x}px"`,
       `y="${this.y}px"`,
-      `font-size=${size}`,
-      `font-family=${family}`,
-      `alignment-baseline=${this.baseline}`,
-      `text-anchor=${this.align}`
+      `font-size="${size}"`,
+      `font-family="${family}"`,
+      `alignment-baseline="${this.baseline}"`,
+      `text-anchor="${this.align}"`
     ]
     if (style) attrs.push(`font-style=${style}`)
     return `<text ${attrs.join(' ')}>${escapeText(this.text)}</text>`
   }
 }
-class ImageShape extends Shape {
+class ImageShape extends BaseShape {
   constructor(data) {
     super(data)
   }
@@ -364,13 +364,7 @@ class SVGRenderingContext2D {
     }))
   }
   _rectPath(x, y, w, h) {
-    return [
-      'M', { x, y },
-      'L', { x: x + w, y },
-      'L', { x: x + w, y: y + h },
-      'L', { x, y: y + h },
-      'z'
-    ].join('')
+    return `M${x},${y}L${x + w},${y}L${x + w},${y + h}L${x},${y + h}z`
   }
   _add(obj) {
     const last = this._objects[this._objects.length - 1]
@@ -404,12 +398,12 @@ class SVGRenderingContext2D {
     }).join('')
   }
   clearRect(x, y, w, h) {
-    this._add(new PathShape({ path: _rectPath(x, y, w, h), matrix: this._matrix, fill: 'white', alpha: 1 }))
+    this._add(new PathShape({ path: this._rectPath(x, y, w, h), clips: [], matrix: this._matrix, fill: 'white', alpha: 1 }))
   }
   strokeRect(x, y, w, h) {
-    this._add(new PathShape({ path: _rectPath(x, y, w, h), matrix: this._matrix, ...this._strokeState() }))
+    this._add(new PathShape({ path: this._rectPath(x, y, w, h), matrix: this._matrix, ...this._strokeState() }))
   }
   fillRect(x, y, w, h) {
-    this._add(new PathShape({ path: _rectPath(x, y, w, h), matrix: this._matrix, ...this._fillState() }))
+    this._add(new PathShape({ path: this._rectPath(x, y, w, h), matrix: this._matrix, ...this._fillState() }))
   }
 }
