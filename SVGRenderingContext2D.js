@@ -93,6 +93,21 @@ class TextShape extends BaseShape {
 class ImageShape extends BaseShape {
   constructor(data) {
     super(data)
+    this.originalSrc = this.src
+  }
+  async load() {
+    const { src } = this
+    if (!src.match(/^https?:\/\//)) return
+    this.src = ''
+    const res = await fetch(src, {
+      mode: 'cors',
+      credentials: 'same-origin',
+    })
+    const blob = await res.blob()
+    const reader = new FileReader()
+    reader.readAsDataURL(blob)
+    await new Promise(resolve => { reader.onload = resolve })
+    this.src = reader.result
   }
   toSVG() {
     const { src, width, height, dx, dy, dw, dh, sx, sy, sw, sh, alpha } = this
@@ -252,7 +267,7 @@ class SVGRenderingContext2D {
     })
     return [
       '<?xml version="1.0" standalone="no"?>',
-      `<svg width="${this.width}px" height="${this.height}px" version="1.1" xmlns="http://www.w3.org/2000/svg">`,
+      `<svg width="${this.width}px" height="${this.height}px" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">`,
       ...clipPaths,
       ...groups.map(({ tagBegin, tagEnd, transform, objects, clips }) => [
           clips.map(path => `<g clip-path="url(#${getClipId(path)})">`).join(''),
@@ -460,5 +475,9 @@ class SVGRenderingContext2D {
   }
   fillRect(x, y, w, h) {
     this._add(new PathShape({ path: this._rectPath(x, y, w, h), matrix: this._matrix, ...this._fillState() }))
+  }
+  async _load() {
+    const loadableObjects = this._objects.filter(o => o.load)
+    await Promise.all(loadableObjects.map(o => o.load()))
   }
 }
