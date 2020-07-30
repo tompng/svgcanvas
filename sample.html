@@ -35,7 +35,18 @@ for (const ctx of [canvasContext, svgContext]) {
     ctx.stroke()
     ctx.fillText('hello', 50, 50)
   }
-  // draw()
+  ctx.font = '100px sans-serif'
+  ctx.textAlign = 'start'
+  ctx.textBaseline = 'top'
+  ctx.fillText('Hello1', 200, 200)
+  ctx.textAlign = 'end'
+  ctx.textBaseline = 'bottom'
+  ctx.fillText('Hello2', 200, 300)
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('Hello3', 200, 400)
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText('Hello4', 200, 500)
   ctx.beginPath()
   for(i=0;i<=600;i+=60){
     ctx.moveTo(i,0)
