@@ -35,6 +35,24 @@ for (const ctx of [canvasContext, svgContext]) {
     ctx.stroke()
     ctx.fillText('hello', 50, 50)
   }
+  if (ctx._beginTextGroup) ctx._beginTextGroup()
+  ctx.save()
+  ctx.translate(100,100)
+  ctx.rotate(0.2)
+  ctx.font = '60px serif'
+  for (let y = 0; y < 6; y++) {
+    for (let x = 0; x < 6; x++) {
+      const c = (y * 6 + x).toString(36)
+      ctx.save()
+      if ((x + y) % 3 == 0) ctx.textAlign = 'center'
+      if ((x + y) % 5 == 0) ctx.textBaseline = 'middle'
+      ctx.fillText(c, x * 60 + 20 * Math.sin(x+y), y * 60)
+      ctx.restore()
+    }
+  }
+  ctx.restore()
+  if (ctx._endTextGroup) ctx._endTextGroup()
+
   ctx.font = '100px sans-serif'
   ctx.textAlign = 'start'
   ctx.textBaseline = 'top'

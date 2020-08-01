@@ -52,6 +52,10 @@ function escapeText(text) {
   return escaped
 }
 
+function compactNumber(v, digits = 2) {
+  return v.toFixed(digits).replace(/\.?0+$/, '')
+}
+
 const textAlignConverts = { center: 'middle' }
 const textBaselineConverts = {
   top: 'text-before-edge',
@@ -67,26 +71,24 @@ class TextShape extends BaseShape {
     return this.text === obj.text && this.font == obj.font && this.align === obj.align && this.baseline === obj.baseline
   }
   toSVG() {
-    return this.toTag('text')
+    const attrs = this.toAttributes(null)
+    return `<text ${attrs.join(' ')}>${escapeText(this.text)}</text>`
   }
-  toTSpanSVG(matrix) {
-    return this.toTag('tspan', matrix)
-  }
-  toTag(tagName, matrix) {
+  toAttributes(matrix) {
     const [size, family, style] = this.font.split(' ')
     const scale = matrix ? matrix.averageScale : 1
     const { x, y } = matrix ? matrix.convert(this) : this
     const attrs = [
       ...this.styleAttrs(),
-      `x="${x}px"`,
-      `y="${y}px"`,
+      `x="${compactNumber(x)}px"`,
+      `y="${compactNumber(y)}px"`,
       `font-size="${scale * parseFloat(size)}px"`,
       `font-family="${family}"`,
       `dominant-baseline="${textBaselineConverts[this.baseline] || this.baseline}"`,
       `text-anchor="${textAlignConverts[this.align] || this.align}"`
     ]
     if (style) attrs.push(`font-style=${style}`)
-    return `<${tagName} ${attrs.join(' ')}>${escapeText(this.text)}</${tagName}>`
+    return attrs
   }
 }
 
@@ -166,7 +168,7 @@ class Matrix {
     )
   }
   toTransform() {
-    return `matrix(${this.xx},${this.yx},${this.xy},${this.yy},${this.tx},${this.ty})`
+    return `matrix(${[this.xx, this.yx, this.xy, this.yy, this.tx, this.ty].map(v => compactNumber(v, 4)).join(',')})`
   }
   get averageScale() {
     return Math.hypot(this.xx, this.xy, this.yx, this.yy) / Math.sqrt(2)
@@ -195,6 +197,80 @@ class Matrix {
       x: (yy * x - xy * y) / d,
       y: (-yx * x + xx * y) / d
     }
+  }
+}
+
+class TransformGroup {
+  objects = []
+  constructor(transform, clips) {
+    this.transform = transform
+    this.clips = clips
+  }
+  add(obj) { this.objects.push(obj) }
+  toSVG() {
+    return [
+      `<g transform="${this.transform}">`,
+      this.objects.map(o => o.toSVG()).join(''),
+      '</g>'
+    ].join('')
+  }
+}
+
+class TextGroup {
+  objects = []
+  constructor(clips) {
+    this.clips = clips
+  }
+  add(obj) { this.objects.push(obj) }
+  toSVG() {
+    if (this.objects.length == 0) return ''
+    const rotate = this.objects[0].matrix.averageRotate
+    const rotateMatrix = new Matrix().rotate(rotate)
+    const revertMatrix = new Matrix().rotate(-rotate)
+    const keys = ['fill', 'stroke', 'stroke-width', 'stroke-opacity', 'fill-opacity', 'font-size', 'font-family', 'dominant-baseline', 'text-anchor']
+    const attrCounts = {}
+    keys.forEach(k => attrCounts[k] = new Map())
+    const segments = this.objects.map(obj => {
+      const attrList = obj.toAttributes(revertMatrix.multiply(obj.matrix))
+      const attrs = {}
+      attrList.forEach(kv => {
+        const [k, v] = kv.split('=', 2)
+        attrs[k] = v
+        if (attrCounts[k]) attrCounts[k].set(v, (attrCounts[k].get(v) || 0) + 1)
+      })
+      return { attrs, text: obj.text }
+    })
+    const dominants = {}
+    keys.forEach(k => {
+      let count = 0
+      let value = null
+      attrCounts[k].forEach((c, v) => {
+        if (c <= count) return
+        count = c
+        value = v
+      })
+      dominants[k] = value
+    })
+    let prevY = null
+    const textAttrs = [`transform="${rotateMatrix.toTransform()}"`]
+    for (const key in dominants) if (key !== 'y') textAttrs.push(key + '=' + dominants[key])
+    return [
+      `<text ${textAttrs.join(' ')}>`,
+      segments.map(({ text, attrs }) => {
+        const attrList = []
+        if (prevY !== attrs.y) {
+          attrList.push('y=' + attrs.y)
+          prevY = attrs.y
+        }
+        for (const key in attrs) {
+          const value = attrs[key]
+          if (key === 'y' || dominants[key] === value) continue
+          attrList.push(key + '=' + value)
+        }
+        return ['<tspan', ...attrList].join(' ') + '>' + escapeText(text) + '</tspan>'
+      }).join(''),
+      '</text>',
+    ].join('')
   }
 }
 
@@ -239,26 +315,22 @@ class SVGRenderingContext2D {
       if (obj.type === 'text_begin') {
         obj.clips.forEach(path => getClipId(path))
         last = null
-        groups.push(textGroup = { tagBegin: `<text>`, tagEnd: '</text>', clips: obj.clips, objects: [] })
+        groups.push(textGroup = new TextGroup(obj.clips))
         return
       } else if (obj.type === 'text_end') {
         textGroup = last = null
         return
       }
-      obj.clips.forEach(path => getClipId(path))
       if (textGroup) {
-        if (textGroup.matrix == null) {
-          const rotate = obj.matrix.averageRotate
-          textGroup.matrix = new Matrix().rotate(-rotate)
-          textGroup.tagBegin = `<text transform="${new Matrix().rotate(rotate).toTransform()}">`
-        }
-        textGroup.objects.push(obj.toTSpanSVG(textGroup.matrix.multiply(obj.matrix)))
+        textGroup.add(obj)
       } else {
+        obj.clips.forEach(path => getClipId(path))
         const transform = obj.matrix.toTransform()
         if (last && last.transform === transform && last.clips === obj.clips) {
-          last.objects.push(obj.toSVG())
+          last.add(obj)
         } else {
-          groups.push(last = { tagBegin: `<g transform="${transform}">`, tagEnd: '</g>', clips: obj.clips, objects: [obj.toSVG()] })
+          groups.push(last = new TransformGroup(transform, obj.clips))
+          last.add(obj)
         }
       }
     })
@@ -269,14 +341,11 @@ class SVGRenderingContext2D {
       '<?xml version="1.0" standalone="no"?>',
       `<svg width="${this.width}px" height="${this.height}px" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">`,
       ...clipPaths,
-      ...groups.map(({ tagBegin, tagEnd, transform, objects, clips }) => [
-          clips.map(path => `<g clip-path="url(#${getClipId(path)})">`).join(''),
-          tagBegin,
-          objects.join(''),
-          tagEnd,
-          clips.map(() => '</g>').join('')
-        ].join('')
-      ),
+      ...groups.map(g => [
+        g.clips.map(path => `<g clip-path="url(#${getClipId(path)})">`).join(''),
+        g.toSVG(),
+        g.clips.map(() => '</g>').join('')
+      ].join('')),
       '</svg>'
     ].join("\n")
   }
@@ -457,14 +526,14 @@ class SVGRenderingContext2D {
     return this._path.map(p => {
       if (typeof p === 'string') return p
       const { x, y } = p
-      return `${Math.round(x * 100) / 100},${Math.round(y * 100) / 100}`
+      return `${compactNumber(x)},${compactNumber(y)}`
     }).join('')
   }
   _tpath() {
     return this._path.map(p => {
       if (typeof p === 'string') return p
       const { x, y } = this._rtrans(p)
-      return `${Math.round(x * 100) / 100},${Math.round(y * 100) / 100}`
+      return `${compactNumber(x)},${compactNumber(y)}`
     }).join('')
   }
   clearRect(x, y, w, h) {
